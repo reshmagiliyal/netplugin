@@ -70,7 +70,7 @@ func CreateEndpointGroup(tenantName, networkName, groupName string) error {
 			return err
 		}
 	}
-
+	log.Infof("Received EndpointGroupCreate dockerrrrr: *** INSIDE EPG****")
 	// assign unique endpoint group ids
 	// FIXME: This is a hack. need to add a epgID resource
 	for i := 0; i < maxEpgID; i++ {
@@ -123,7 +123,7 @@ func CreateEndpointGroup(tenantName, networkName, groupName string) error {
 		log.Debugf("ACI -- Allocated vlan %v for epg %v", pktTag, groupName)
 
 	}
-
+	log.Infof("Received EndpointGroupCreate: *** INSIDE EPG****")
 	err = epgCfg.Write()
 	if err != nil {
 		return err
@@ -182,4 +182,39 @@ func DeleteEndpointGroup(tenantName, groupName string) error {
 	}
 
 	return docknet.DeleteDockNet(epgCfg.TenantName, epgCfg.NetworkName, epgCfg.GroupName)
+}
+
+//UpdateEndpointGroup updates the endpointgroups
+func UpdateEndpointGroup(bandwidth, key string, Dscp int) error {
+
+	// Get the state driver - get the etcd driver state
+	stateDriver, err := utils.GetStateDriver()
+	if err != nil {
+		return err
+	}
+
+	// Read etcd driver
+	epCfg := mastercfg.EndpointGroupState{}
+	epCfg.StateDriver = stateDriver
+
+	err = epCfg.Read(key)
+	if err != nil {
+		log.Errorf("Could not find endpointgroup %s. Err: %v", key, err)
+		return err
+	}
+
+	//update the epGroup state
+	epCfg.DSCP = Dscp
+	epCfg.Bandwidth = bandwidth
+
+	log.Infof("This is the new DSCP", epCfg.DSCP)
+	log.Infof("This is the old DSCP", Dscp)
+	log.Infof("This is the new bandwidth", epCfg.Bandwidth)
+
+	//Write to etcd
+	err = epCfg.Write()
+	if err != nil {
+		return err
+	}
+	return nil
 }
