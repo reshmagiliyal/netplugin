@@ -446,8 +446,6 @@ var globalEpgID = 1
 func (ac *APIController) EndpointGroupCreate(endpointGroup *contivModel.EndpointGroup) error {
 	log.Infof("Received EndpointGroupCreate: %+v", endpointGroup)
 
-	log.Infof("Received EndpointGroupCreate this is the NetProfile name: %s", endpointGroup.NetProfile)
-
 	// Find the tenant
 	tenant := contivModel.FindTenant(endpointGroup.TenantName)
 	if tenant == nil {
@@ -478,9 +476,9 @@ func (ac *APIController) EndpointGroupCreate(endpointGroup *contivModel.Endpoint
 		// find the policy
 		policy := contivModel.FindPolicy(policyKey)
 		if policy == nil {
-			log.Errorf("Could not find policy %s", policyName)
+			log.Errorf("Error finding policy %s", policyName)
 			endpointGroupCleanup(endpointGroup)
-			return core.Errorf("Policy not found")
+			return core.Errorf("Policy:%s not found", policyName)
 		}
 
 		// attach policy to epg
@@ -507,7 +505,7 @@ func (ac *APIController) EndpointGroupCreate(endpointGroup *contivModel.Endpoint
 	netprofile := contivModel.FindNetprofile(profileKey)
 	if netprofile == nil {
 		log.Errorf("Error finding netprofile: %s", profileKey)
-		return errors.New("Netprofile not found")
+		return core.Errorf("Netprofile%s not found", netprofile.ProfileName)
 	}
 
 	// attach NetProfile to epg

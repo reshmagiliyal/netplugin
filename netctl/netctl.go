@@ -262,6 +262,8 @@ func createNetProfile(ctx *cli.Context) {
 		ProfileName: name,
 		TenantName:  tenant,
 	}))
+
+	logrus.Infof("Creating netprofile %s:%s", tenant, name)
 }
 
 func deleteNetProfile(ctx *cli.Context) {
@@ -346,6 +348,8 @@ func createNetwork(ctx *cli.Context) {
 	encap := ctx.String("encap")
 	pktTag := ctx.Int("pkt-tag")
 	nwType := ctx.String("nw-type")
+
+	logrus.Infof("Creating network %s:%s", tenant, network)
 
 	errCheck(ctx, getClient(ctx).NetworkPost(&contivClient.Network{
 		TenantName:  tenant,
@@ -516,6 +520,9 @@ func createEndpointGroup(ctx *cli.Context) {
 	policies := ctx.StringSlice("policy")
 
 	extContractsGrps := ctx.StringSlice("external-contract")
+
+	logrus.Infof("Creating EndpointGroup %s:%s", tenant, group)
+
 	errCheck(ctx, getClient(ctx).EndpointGroupPost(&contivClient.EndpointGroup{
 		TenantName:       tenant,
 		NetworkName:      network,
@@ -751,6 +758,7 @@ func createAppProfile(ctx *cli.Context) {
 	if ctx.String("group") == "" {
 		groups = []string{}
 	}
+	logrus.Infof("Creating AppProfile %s:%s", tenant, prof)
 
 	errCheck(ctx, getClient(ctx).AppProfilePost(&contivClient.AppProfile{
 		TenantName:     tenant,
@@ -880,6 +888,8 @@ func createServiceLB(ctx *cli.Context) {
 	}
 	service.Selectors = append(service.Selectors, selectors...)
 	service.Ports = append(service.Ports, ports...)
+
+	logrus.Infof("Creating ServiceLB %s:%s", tenantName, serviceName)
 	errCheck(ctx, getClient(ctx).ServiceLBPost(service))
 }
 
@@ -966,16 +976,24 @@ func listExternalContracts(ctx *cli.Context) {
 	} else {
 		writer := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 		defer writer.Flush()
-		for _, extContractsGroup := range filtered {
-			if extContractsGroup.TenantName != tenant {
-				continue
-			}
-			writer.Write([]byte(fmt.Sprintf(" Name: %s\t\tType: %s\n", extContractsGroup.ContractsGroupName, extContractsGroup.ContractsType)))
-			writer.Write([]byte(fmt.Sprintf(" Contracts:\n")))
-			for _, contract := range extContractsGroup.Contracts {
-				writer.Write([]byte(fmt.Sprintf("\t\t%s\n", contract)))
-			}
+		//	for _, extContractsGroup := range filtered {
+		//	if extContractsGroup.TenantName != tenant {
+		//	continue
+		//}
+		//	writer.Write(buf)
+		writer.Write([]byte("Tenant\tName\t\tType\n"))
+		writer.Write([]byte("------\t------\t\t------\n"))
+		//	writer.Write([]byte(fmt.Sprintf(" Contracts:\n")))
+		for _, extContracts := range filtered {
+			writer.Write([]byte(fmt.Sprintf("%s\t%s\t\t%s\n", extContracts.TenantName, extContracts.ContractsGroupName, extContracts.ContractsType)))
+			writer.Write([]byte(fmt.Sprintf("Contracts:\t%s\n", extContracts.Contracts)))
 		}
+		//	writer.Write([]byte(fmt.Sprintf(" Name: %s\t\tType: %s\n", extContractsGroup.ContractsGroupName, extContractsGroup.ContractsType)))
+		//	writer.Write([]byte(fmt.Sprintf(" Contracts:\n")))
+		/*for _, contract := range extContractsGroup.Contracts {
+			writer.Write([]byte(fmt.Sprintf("\t\t%s\n", contract)))
+		}*/
+		//}
 	}
 }
 
@@ -1011,6 +1029,8 @@ func createExternalContracts(ctx *cli.Context) {
 	}
 
 	contractsGroupName := ctx.Args()[0]
+
+	logrus.Infof("Creating ExternalContracts %s:%s", tenant, contractsGroupName)
 
 	errCheck(ctx, getClient(ctx).ExtContractsGroupPost(&contivClient.ExtContractsGroup{
 		TenantName:         tenant,
