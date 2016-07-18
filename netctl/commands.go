@@ -340,7 +340,7 @@ var Commands = []cli.Command{
 				Name:    "ls",
 				Aliases: []string{"list"},
 				Usage:   "List external contracts",
-				Flags:   []cli.Flag{quietFlag, jsonFlag, tenantFlag},
+				Flags:   []cli.Flag{quietFlag, allFlag, jsonFlag, tenantFlag},
 				Action:  listExternalContracts,
 			},
 			{

@@ -62,30 +62,28 @@ func listPolicies(ctx *cli.Context) {
 
 	var filtered []*contivClient.Policy
 
-	if !ctx.Bool("all") {
-		for _, policy := range *policies {
-			if policy.TenantName == tenant {
-				filtered = append(filtered, policy)
-			}
+	for _, policy := range *policies {
+		if policy.TenantName == tenant || ctx.Bool("all") {
+			filtered = append(filtered, policy)
 		}
+	}
 
-		if ctx.Bool("json") {
-			dumpJSONList(ctx, filtered)
-		} else if ctx.Bool("quiet") {
-			policies := ""
-			for _, policy := range filtered {
-				policies += policy.PolicyName + "\n"
-			}
-			os.Stdout.WriteString(policies)
-		} else {
-			writer := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			defer writer.Flush()
-			writer.Write([]byte("Tenant\tPolicy\n"))
-			writer.Write([]byte("------\t------\n"))
+	if ctx.Bool("json") {
+		dumpJSONList(ctx, filtered)
+	} else if ctx.Bool("quiet") {
+		policies := ""
+		for _, policy := range filtered {
+			policies += policy.PolicyName + "\n"
+		}
+		os.Stdout.WriteString(policies)
+	} else {
+		writer := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		defer writer.Flush()
+		writer.Write([]byte("Tenant\tPolicy\n"))
+		writer.Write([]byte("------\t------\n"))
 
-			for _, policy := range filtered {
-				writer.Write([]byte(fmt.Sprintf("%s\t%s\n", policy.TenantName, policy.PolicyName)))
-			}
+		for _, policy := range filtered {
+			writer.Write([]byte(fmt.Sprintf("%s\t%s\n", policy.TenantName, policy.PolicyName)))
 		}
 	}
 }
@@ -944,23 +942,31 @@ func listServiceLB(ctx *cli.Context) {
 func listExternalContracts(ctx *cli.Context) {
 	argCheck(0, ctx)
 
-	extContractsGroups, err := getClient(ctx).ExtContractsGroupList()
+	extContractsGroupsList, err := getClient(ctx).ExtContractsGroupList()
 	errCheck(ctx, err)
 
 	tenant := ctx.String("tenant")
 
+	var filtered []*contivClient.ExtContractsGroup
+
+	for _, extContractsGroup := range *extContractsGroupsList {
+		if extContractsGroup.TenantName == tenant || ctx.Bool("all") {
+			filtered = append(filtered, extContractsGroup)
+		}
+	}
+
 	if ctx.Bool("json") {
-		dumpJSONList(ctx, extContractsGroups)
+		dumpJSONList(ctx, filtered)
 	} else if ctx.Bool("quiet") {
 		contractsGroupNames := ""
-		for _, extContractsGroup := range *extContractsGroups {
+		for _, extContractsGroup := range filtered {
 			contractsGroupNames += extContractsGroup.ContractsGroupName + "\n"
 		}
 		os.Stdout.WriteString(contractsGroupNames)
 	} else {
 		writer := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 		defer writer.Flush()
-		for _, extContractsGroup := range *extContractsGroups {
+		for _, extContractsGroup := range filtered {
 			if extContractsGroup.TenantName != tenant {
 				continue
 			}
