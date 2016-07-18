@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/contiv/netplugin",
 	"GoVersion": "go1.5.1",
-	"GodepVersion": "v70",
+	"GodepVersion": "v74",
 	"Packages": [
 		"./..."
 	],
@@ -54,11 +54,11 @@
 		},
 		{
 			"ImportPath": "github.com/contiv/contivmodel",
-			"Rev": "a9279c43e839341bc4cd06e43ba2bd58f62d6a07"
+			"Rev": "f2e09da822072d6546029c9aca31311f38c77d16"
 		},
 		{
 			"ImportPath": "github.com/contiv/contivmodel/client",
-			"Rev": "a9279c43e839341bc4cd06e43ba2bd58f62d6a07"
+			"Rev": "f2e09da822072d6546029c9aca31311f38c77d16"
 		},
 		{
 			"ImportPath": "github.com/contiv/libovsdb",
@@ -67,31 +67,31 @@
 		},
 		{
 			"ImportPath": "github.com/contiv/objdb",
-			"Rev": "3ed0b89243f7704bc39421288f927098b92b0a36"
+			"Rev": "2d0fdc4568f610e203079781a327cae564fc790d"
 		},
 		{
 			"ImportPath": "github.com/contiv/objdb/modeldb",
-			"Rev": "3ed0b89243f7704bc39421288f927098b92b0a36"
+			"Rev": "2d0fdc4568f610e203079781a327cae564fc790d"
 		},
 		{
 			"ImportPath": "github.com/contiv/ofnet",
-			"Rev": "2bec1e4efe6a4a7aadd520b255053b8ea487e4b7"
+			"Rev": "4525f9b4ddad47b45d045ee0d60adeaa91733ac7"
 		},
 		{
 			"ImportPath": "github.com/contiv/ofnet/ofctrl",
-			"Rev": "2bec1e4efe6a4a7aadd520b255053b8ea487e4b7"
+			"Rev": "4525f9b4ddad47b45d045ee0d60adeaa91733ac7"
 		},
 		{
 			"ImportPath": "github.com/contiv/ofnet/ovsdbDriver",
-			"Rev": "2bec1e4efe6a4a7aadd520b255053b8ea487e4b7"
+			"Rev": "4525f9b4ddad47b45d045ee0d60adeaa91733ac7"
 		},
 		{
 			"ImportPath": "github.com/contiv/ofnet/pqueue",
-			"Rev": "2bec1e4efe6a4a7aadd520b255053b8ea487e4b7"
+			"Rev": "4525f9b4ddad47b45d045ee0d60adeaa91733ac7"
 		},
 		{
 			"ImportPath": "github.com/contiv/ofnet/rpcHub",
-			"Rev": "2bec1e4efe6a4a7aadd520b255053b8ea487e4b7"
+			"Rev": "4525f9b4ddad47b45d045ee0d60adeaa91733ac7"
 		},
 		{
 			"ImportPath": "github.com/contiv/systemtests-utils",
@@ -288,19 +288,19 @@
 		},
 		{
 			"ImportPath": "github.com/shaleman/libOpenflow/common",
-			"Rev": "94f338a137b50db6fa7d32e8cc3b406306616280"
+			"Rev": "89b83cfc0c8fb9d2872729b7484a9f592f074c53"
 		},
 		{
 			"ImportPath": "github.com/shaleman/libOpenflow/openflow13",
-			"Rev": "94f338a137b50db6fa7d32e8cc3b406306616280"
+			"Rev": "89b83cfc0c8fb9d2872729b7484a9f592f074c53"
 		},
 		{
 			"ImportPath": "github.com/shaleman/libOpenflow/protocol",
-			"Rev": "94f338a137b50db6fa7d32e8cc3b406306616280"
+			"Rev": "89b83cfc0c8fb9d2872729b7484a9f592f074c53"
 		},
 		{
 			"ImportPath": "github.com/shaleman/libOpenflow/util",
-			"Rev": "94f338a137b50db6fa7d32e8cc3b406306616280"
+			"Rev": "89b83cfc0c8fb9d2872729b7484a9f592f074c53"
 		},
 		{
 			"ImportPath": "github.com/stretchr/testify/assert",
@@ -386,6 +386,10 @@
 		{
 			"ImportPath": "gopkg.in/tomb.v2",
 			"Rev": "14b3d72120e8d10ea6e6b7f87f7175734b1faab8"
+		},
+		{
+			"ImportPath": "github.com/vishvananda/netns",
+			"Rev": "8ba1072b58e0c2a240eb5f6120165c7776c3e7b8"
 		}
 	]
 }

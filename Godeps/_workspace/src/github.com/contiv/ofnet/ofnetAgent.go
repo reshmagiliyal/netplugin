@@ -36,6 +36,7 @@ import (
 	"github.com/contiv/ofnet/ovsdbDriver"
 	"github.com/contiv/ofnet/rpcHub"
 	"github.com/jainvipin/bitset"
+	"github.com/shaleman/libOpenflow/openflow13"
 )
 
 // OfnetAgent state
@@ -171,7 +172,6 @@ func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uin
 		agent.fwdMode = "routing"
 		agent.ovsDriver = ovsdbDriver.NewOvsDriver(bridgeName)
 		agent.protopath = NewOfnetBgp(agent, routerInfo)
-
 	default:
 		log.Fatalf("Unknown Datapath %s", dpName)
 	}
@@ -573,7 +573,7 @@ func (self *OfnetAgent) AddNetwork(vlanId uint16, vni uint32, Gw string, Vrf str
 func (self *OfnetAgent) RemoveNetwork(vlanId uint16, vni uint32, Gw string, Vrf string) error {
 	// Dont handle endpointDB operations during this time
 	self.lockDB()
-	self.unlockDB()
+	defer self.unlockDB()
 
 	vrf := self.vlanVrf[vlanId]
 	gwEpid := self.getEndpointIdByIpVrf(net.ParseIP(Gw), *vrf)
@@ -585,7 +585,7 @@ func (self *OfnetAgent) RemoveNetwork(vlanId uint16, vni uint32, Gw string, Vrf 
 		if (vni != 0) && (endpoint.Vni == vni) {
 			if endpoint.OriginatorIp.String() == self.localIp.String() {
 				log.Fatalf("Vlan %d still has routes. Route: %+v", vlanId, endpoint)
-			} else {
+			} else if endpoint.EndpointType == "internal" {
 				// Network delete arrived before other hosts cleanup endpoint
 				log.Warnf("Vlan %d still has routes, cleaning up. Route: %+v", vlanId, endpoint)
 				// Uninstall the endpoint from datapath
@@ -609,9 +609,9 @@ func (self *OfnetAgent) RemoveNetwork(vlanId uint16, vni uint32, Gw string, Vrf 
 }
 
 // AddUplink adds an uplink to the switch
-func (self *OfnetAgent) AddUplink(portNo uint32) error {
+func (self *OfnetAgent) AddUplink(portNo uint32, ifname string) error {
 	// Call the datapath
-	return self.datapath.AddUplink(portNo)
+	return self.datapath.AddUplink(portNo, ifname)
 }
 
 // RemoveUplink remove an uplink to the switch
@@ -770,6 +770,73 @@ func (self *OfnetAgent) DeleteLocalProtoRoute(path *OfnetProtoRouteInfo) {
 	if self.protopath != nil {
 		self.protopath.DeleteLocalProtoRoute(path)
 	}
+}
+
+// MultipartReply Receives a multi-part reply from the switch.
+func (self *OfnetAgent) MultipartReply(sw *ofctrl.OFSwitch, reply *openflow13.MultipartReply) {
+	log.Debugf("Multi-part reply received from switch: %+v", reply)
+
+	// Inform the datapath
+	self.datapath.MultipartReply(sw, reply)
+}
+
+// GetEndpointStats fetches all endpoint stats
+func (self *OfnetAgent) GetEndpointStats() ([]*OfnetEndpointStats, error) {
+	return self.datapath.GetEndpointStats()
+}
+
+// InspectState returns ofnet agent state
+func (self *OfnetAgent) InspectState() (interface{}, error) {
+	dpState, err := self.datapath.InspectState()
+	if err != nil {
+		log.Errorf("Error getting state from datapath. Err: %v", err)
+		return nil, err
+	}
+
+	// convert ofnet struct to an exported struct for json marshaling
+	ofnetExport := struct {
+		LocalIp     net.IP                // Local IP to be used for tunnel end points
+		MyPort      uint16                // Port where the agent's RPC server is listening
+		MyAddr      string                // RPC server addr. same as localIp. different in testing environments
+		IsConnected bool                  // Is the switch connected
+		DpName      string                // Datapath type
+		Protopath   OfnetProto            // Configured protopath
+		MasterDb    map[string]*OfnetNode // list of Masters
+		// PortVlanMap     map[uint32]*uint16        // Map port number to vlan
+		// VniVlanMap      map[uint32]*uint16        // Map VNI to vlan
+		// VlanVniMap      map[uint16]*uint32        // Map vlan to VNI
+		VtepTable  map[string]*uint32        // Map vtep IP to OVS port number
+		EndpointDb map[string]*OfnetEndpoint // all known endpoints
+		// LocalEndpointDb map[uint32]*OfnetEndpoint // local port to endpoint map
+		VrfNameIdMap map[string]*uint16 // Map vrf name to vrf Id
+		// VrfIdNameMap    map[uint16]*string        // Map vrf id to vrf Name
+		VrfDb map[string]*OfnetVrfInfo // Db of all the global vrfs
+		// VlanVrf         map[uint16]*string        //vlan to vrf mapping
+		FwdMode  string      ///forwarding mode routing or bridge
+		Datapath interface{} // datapath state
+	}{
+		self.localIp,
+		self.MyPort,
+		self.MyAddr,
+		self.isConnected,
+		self.dpName,
+		self.protopath,
+		self.masterDb,
+		// self.portVlanMap,
+		// self.vniVlanMap,
+		// self.vlanVniMap,
+		self.vtepTable,
+		self.endpointDb,
+		// self.localEndpointDb,
+		self.vrfNameIdMap,
+		// self.vrfIdNameMap,
+		self.vrfDb,
+		// self.vlanVrf,
+		self.fwdMode,
+		dpState,
+	}
+
+	return &ofnetExport, nil
 }
 
 func (self *OfnetAgent) createVrf(Vrf string) (uint16, bool) {

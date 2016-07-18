@@ -257,7 +257,8 @@ func (self *Vlrouter) RemoveLocalEndpoint(endpoint OfnetEndpoint) error {
 	}
 
 	// Find the flow entry
-	flowId := self.agent.getEndpointIdByIpVlan(endpoint.IpAddr, endpoint.Vlan)
+	//flowId := self.agent.getEndpointIdByIpVlan(endpoint.IpAddr, endpoint.Vlan)
+	flowId := endpoint.EndpointID
 	ipFlow := self.flowDb[flowId]
 	if ipFlow == nil {
 		log.Errorf("Error finding the flow for endpoint: %+v", endpoint)
@@ -511,7 +512,8 @@ func (self *Vlrouter) RemoveEndpoint(endpoint *OfnetEndpoint) error {
 	delete(self.unresolvedEPs, endpoint.EndpointID)
 
 	// Find the flow entry
-	flowId := self.agent.getEndpointIdByIpVlan(endpoint.IpAddr, endpoint.Vlan)
+	//flowId := self.agent.getEndpointIdByIpVlan(endpoint.IpAddr, endpoint.Vlan)
+	flowId := endpoint.EndpointID
 	ipFlow := self.flowDb[flowId]
 	if ipFlow == nil {
 		log.Errorf("Error finding the flow for endpoint: %+v", endpoint)
@@ -828,6 +830,7 @@ func (self *Vlrouter) processArp(pkt protocol.Ethernet, inPort uint32) {
 		}
 	}
 }
+
 func (self *Vlrouter) AddVtepPort(portNo uint32, remoteIp net.IP) error {
 	return nil
 }
@@ -855,7 +858,7 @@ func (self *Vlrouter) resolveUnresolvedEPs(MacAddrStr string, portNo uint32) {
 }
 
 // AddUplink adds an uplink to the switch
-func (self *Vlrouter) AddUplink(portNo uint32) error {
+func (self *Vlrouter) AddUplink(portNo uint32, ifname string) error {
 	log.Infof("Adding uplink port: %+v", portNo)
 
 	// Install a flow entry for vlan mapping and point it to Mac table
@@ -901,4 +904,18 @@ func (self *Vlrouter) DelSvcSpec(svcName string, spec *ServiceSpec) error {
 
 // SvcProviderUpdate Service Proxy Back End update
 func (self *Vlrouter) SvcProviderUpdate(svcName string, providers []string) {
+}
+
+// GetEndpointStats fetches ep stats
+func (self *Vlrouter) GetEndpointStats() ([]*OfnetEndpointStats, error) {
+	return nil, nil
+}
+
+// MultipartReply handles stats reply
+func (self *Vlrouter) MultipartReply(sw *ofctrl.OFSwitch, reply *openflow13.MultipartReply) {
+}
+
+// InspectState returns current state
+func (self *Vlrouter) InspectState() (interface{}, error) {
+	return nil, nil
 }

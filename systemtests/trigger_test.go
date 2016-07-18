@@ -18,10 +18,12 @@ func (s *systemtestSuite) TestTriggerNetmasterSwitchover(c *C) {
 		NetworkName: "private",
 		Subnet:      "10.1.0.0/16",
 		Gateway:     "10.1.1.254",
-		Ipv6Subnet:  "2016:0617::/100",
-		Ipv6Gateway: "2016:0617::254",
 		PktTag:      1001,
 		Encap:       "vxlan",
+	}
+	if s.fwdMode != "routing" {
+		network.Ipv6Subnet = "2016:0617::/100"
+		network.Ipv6Gateway = "2016:0617::254"
 	}
 	c.Assert(s.cli.NetworkPost(network), IsNil)
 
@@ -73,6 +75,9 @@ func (s *systemtestSuite) TestTriggerNetmasterSwitchover(c *C) {
 
 		c.Assert(s.removeContainers(containers), IsNil)
 	}
+
+	// delete the network
+	c.Assert(s.cli.NetworkDelete("default", "private"), IsNil)
 }
 
 func (s *systemtestSuite) TestTriggerNetpluginDisconnect(c *C) {
@@ -81,11 +86,14 @@ func (s *systemtestSuite) TestTriggerNetpluginDisconnect(c *C) {
 		NetworkName: "private",
 		Subnet:      "10.1.0.0/16",
 		Gateway:     "10.1.1.254",
-		Ipv6Subnet:  "2016:0617::/100",
-		Ipv6Gateway: "2016:0617::254",
 		PktTag:      1001,
 		Encap:       "vxlan",
 	}
+	if s.fwdMode != "routing" {
+		network.Ipv6Subnet = "2016:0617::/100"
+		network.Ipv6Gateway = "2016:0617::254"
+	}
+
 	c.Assert(s.cli.NetworkPost(network), IsNil)
 
 	for i := 0; i < s.iterations; i++ {
@@ -104,12 +112,19 @@ func (s *systemtestSuite) TestTriggerNetpluginDisconnect(c *C) {
 			}
 			c.Assert(node.runCommandUntilNoError("pgrep netplugin"), IsNil)
 			time.Sleep(20 * time.Second)
+			c.Assert(node.waitForListeners(), IsNil)
+			c.Assert(s.verifyVTEPs(), IsNil)
+			c.Assert(s.verifyEPs(containers), IsNil)
+			time.Sleep(2 * time.Second)
 
 			c.Assert(s.pingTest(containers), IsNil)
 		}
 
 		c.Assert(s.removeContainers(containers), IsNil)
 	}
+
+	// delete the network
+	c.Assert(s.cli.NetworkDelete("default", "private"), IsNil)
 }
 
 func (s *systemtestSuite) TestTriggerNodeReload(c *C) {
@@ -121,9 +136,11 @@ func (s *systemtestSuite) TestTriggerNodeReload(c *C) {
 		NetworkName: "private",
 		Subnet:      "10.1.0.0/16",
 		Gateway:     "10.1.1.254",
-		Ipv6Subnet:  "2016:0617::/100",
-		Ipv6Gateway: "2016:0617::254",
 		Encap:       "vxlan",
+	}
+	if s.fwdMode != "routing" {
+		network.Ipv6Subnet = "2016:0617::/100"
+		network.Ipv6Gateway = "2016:0617::254"
 	}
 	c.Assert(s.cli.NetworkPost(network), IsNil)
 
@@ -189,6 +206,41 @@ func (s *systemtestSuite) TestTriggerNodeReload(c *C) {
 	}
 }
 
+func (s *systemtestSuite) TestTriggerClusterStoreRestart(c *C) {
+	network := &client.Network{
+		TenantName:  "default",
+		NetworkName: "private",
+		Subnet:      "10.1.1.0/24",
+		Gateway:     "10.1.1.254",
+		Encap:       "vxlan",
+	}
+	c.Assert(s.cli.NetworkPost(network), IsNil)
+
+	for i := 0; i < s.iterations; i++ {
+		containers, err := s.runContainers(s.containers, false, "private", nil, nil)
+		c.Assert(err, IsNil)
+
+		// test ping for all containers
+		c.Assert(s.pingTest(containers), IsNil)
+
+		// reload VMs one at a time
+		for _, node := range s.nodes {
+			c.Assert(node.restartClusterStore(), IsNil)
+
+			time.Sleep(20 * time.Second)
+			c.Assert(s.verifyVTEPs(), IsNil)
+
+			// test ping for all containers
+			c.Assert(s.pingTest(containers), IsNil)
+		}
+
+		c.Assert(s.removeContainers(containers), IsNil)
+	}
+
+	// delete the network
+	c.Assert(s.cli.NetworkDelete("default", "private"), IsNil)
+}
+
 func (s *systemtestSuite) TestTriggers(c *C) {
 
 	groupNames := []string{}
@@ -197,10 +249,12 @@ func (s *systemtestSuite) TestTriggers(c *C) {
 		NetworkName: "private",
 		Subnet:      "10.1.0.0/16",
 		Gateway:     "10.1.1.254",
-		Ipv6Subnet:  "2016:0617::/100",
-		Ipv6Gateway: "2016:0617::254",
 		PktTag:      1001,
 		Encap:       "vxlan",
+	}
+	if s.fwdMode != "routing" {
+		network.Ipv6Subnet = "2016:0617::/100"
+		network.Ipv6Gateway = "2016:0617::254"
 	}
 	c.Assert(s.cli.NetworkPost(network), IsNil)
 
@@ -209,10 +263,12 @@ func (s *systemtestSuite) TestTriggers(c *C) {
 		NetworkName: "other",
 		Subnet:      "10.2.0.0/16",
 		Gateway:     "10.2.1.254",
-		Ipv6Subnet:  "2016:0620::/100",
-		Ipv6Gateway: "2016:0620::254",
 		PktTag:      1002,
 		Encap:       "vxlan",
+	}
+	if s.fwdMode != "routing" {
+		network.Ipv6Subnet = "2016:0617::/100"
+		network.Ipv6Gateway = "2016:0617::254"
 	}
 	c.Assert(s.cli.NetworkPost(network), IsNil)
 

@@ -218,12 +218,14 @@ type NetworkLinks struct {
 }
 
 type NetworkOper struct {
-	AllocatedAddressesCount int    `json:"allocatedAddressesCount,omitempty"` // Vlan/Vxlan Tag
-	AllocatedIPAddresses    string `json:"allocatedIPAddresses,omitempty"`    // allocated IP addresses
-	DnsServerIP             string `json:"dnsServerIP,omitempty"`             // dns IP for the network
-	ExternalPktTag          int    `json:"externalPktTag,omitempty"`          // external packet tag
-	NumEndpoints            int    `json:"numEndpoints,omitempty"`            // external packet tag
-	PktTag                  int    `json:"pktTag,omitempty"`                  // internal packet tag
+	AllocatedAddressesCount int            `json:"allocatedAddressesCount,omitempty"` // Vlan/Vxlan Tag
+	AllocatedIPAddresses    string         `json:"allocatedIPAddresses,omitempty"`    // allocated IP addresses
+	AvailableIPAddresses    string         `json:"availableIPAddresses,omitempty"`    // Available IP addresses
+	DnsServerIP             string         `json:"dnsServerIP,omitempty"`             // dns IP for the network
+	Endpoints               []EndpointOper `json:"endpoints,omitempty"`
+	ExternalPktTag          int            `json:"externalPktTag,omitempty"` // external packet tag
+	NumEndpoints            int            `json:"numEndpoints,omitempty"`   // external packet tag
+	PktTag                  int            `json:"pktTag,omitempty"`         // internal packet tag
 
 }
 
@@ -308,8 +310,17 @@ type ServiceLBLinks struct {
 	Tenant  modeldb.Link `json:"Tenant,omitempty"`
 }
 
+type ServiceLBOper struct {
+	NumProviders int            `json:"numProviders,omitempty"` //  number of provider endpoints for the service
+	Providers    []EndpointOper `json:"providers,omitempty"`
+	ServiceVip   string         `json:"serviceVip,omitempty"` // allocated IP addresses
+
+}
+
 type ServiceLBInspect struct {
 	Config ServiceLB
+
+	Oper ServiceLBOper
 }
 
 type Tenant struct {
@@ -475,6 +486,8 @@ type RuleCallbacks interface {
 }
 
 type ServiceLBCallbacks interface {
+	ServiceLBGetOper(serviceLB *ServiceLBInspect) error
+
 	ServiceLBCreate(serviceLB *ServiceLB) error
 	ServiceLBUpdate(serviceLB, params *ServiceLB) error
 	ServiceLBDelete(serviceLB *ServiceLB) error
@@ -2888,7 +2901,7 @@ func ValidateNetwork(obj *Network) error {
 		return errors.New("pktTag Value Out of bound")
 	}
 
-	subnetMatch := regexp.MustCompile("^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3})(\\-(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))?/(3[0-1]|2[0-9]|1[0-9]|[1-9])$")
+	subnetMatch := regexp.MustCompile("^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3})(\\-((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}))?/(3[0-1]|2[0-9]|1[0-9]|[1-9])$")
 	if subnetMatch.MatchString(obj.Subnet) == false {
 		return errors.New("subnet string invalid format")
 	}
@@ -3555,8 +3568,31 @@ func httpInspectServiceLB(w http.ResponseWriter, r *http.Request, vars map[strin
 	}
 	obj.Config = *objConfig
 
+	if err := GetOperServiceLB(&obj); err != nil {
+		log.Errorf("GetServiceLB error for: %+v. Err: %v", obj, err)
+		return nil, err
+	}
+
 	// Return the obj
 	return &obj, nil
+}
+
+// Get a serviceLBOper object
+func GetOperServiceLB(obj *ServiceLBInspect) error {
+	// Check if we handle this object
+	if objCallbackHandler.ServiceLBCb == nil {
+		log.Errorf("No callback registered for serviceLB object")
+		return errors.New("Invalid object type")
+	}
+
+	// Perform callback
+	err := objCallbackHandler.ServiceLBCb.ServiceLBGetOper(obj)
+	if err != nil {
+		log.Errorf("ServiceLBDelete retruned error for: %+v. Err: %v", obj, err)
+		return err
+	}
+
+	return nil
 }
 
 // LIST REST call

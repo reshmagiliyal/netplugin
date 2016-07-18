@@ -151,6 +151,16 @@ func (p *NetPlugin) DeleteEndpoint(id string) error {
 	return p.NetworkDriver.DeleteEndpoint(id)
 }
 
+// CreateHostAccPort creates a host access port
+func (p *NetPlugin) CreateHostAccPort(portName string) error {
+	return p.NetworkDriver.CreateHostAccPort(portName)
+}
+
+// DeleteHostAccPort creates a host access port
+func (p *NetPlugin) DeleteHostAccPort(portName string) error {
+	return p.NetworkDriver.DeleteHostAccPort(portName)
+}
+
 // FetchEndpoint retrieves an endpoint's state for a given ID
 func (p *NetPlugin) FetchEndpoint(id string) (core.State, error) {
 	return nil, core.Errorf("Not implemented")
@@ -199,4 +209,14 @@ func (p *NetPlugin) DeleteServiceLB(servicename string, spec *core.ServiceSpec) 
 //SvcProviderUpdate hhhh
 func (p *NetPlugin) SvcProviderUpdate(servicename string, providers []string) {
 	p.NetworkDriver.SvcProviderUpdate(servicename, providers)
+}
+
+// GetEndpointStats returns all endpoint stats
+func (p *NetPlugin) GetEndpointStats() ([]byte, error) {
+	return p.NetworkDriver.GetEndpointStats()
+}
+
+// InspectState returns current state of the plugin
+func (p *NetPlugin) InspectState() ([]byte, error) {
+	return p.NetworkDriver.InspectState()
 }

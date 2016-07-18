@@ -28,9 +28,12 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/jainvipin/bitset"
 	"github.com/vishvananda/netlink"
+	osexec "os/exec"
 
 	"github.com/contiv/netplugin/core"
 )
+
+const hostPvtSubnet = 0xac140000
 
 var endianNess string
 
@@ -52,7 +55,7 @@ func ValidateNetworkRangeParams(ipRange string, subnetLen uint) error {
 	firstAddr, _ := ipv4ToUint32(GetSubnetAddr(ipRange, subnetLen))
 	lastAddr, _ := ipv4ToUint32(getLastAddrInSubnet(ipRange, subnetLen))
 
-	if rangeMin < firstAddr || rangeMax > lastAddr {
+	if rangeMin < firstAddr || rangeMax > lastAddr || rangeMin > rangeMax {
 		return core.Errorf("Network subnet format not valid")
 	}
 
@@ -92,6 +95,45 @@ func SetBitsOutsideRange(ipAllocMap *bitset.BitSet, ipRange string, subnetLen ui
 	// Set bits greater than the rangeMax as used
 	for i = ((rangeMin - firstAddr) + ((rangeMax - rangeMin) + 1)); i < (lastAddr - firstAddr); i++ {
 		ipAllocMap.Set(uint(i))
+	}
+}
+
+// GetIPAddrRange returns IP CIDR as a ip address range
+func GetIPAddrRange(ipCIDR string, subnetLen uint) string {
+	rangeMin, _ := ipv4ToUint32(getFirstAddrInRange(ipCIDR))
+	rangeMax, _ := ipv4ToUint32(getLastAddrInRange(ipCIDR, subnetLen))
+	firstAddr, _ := ipv4ToUint32(GetSubnetAddr(ipCIDR, subnetLen))
+	lastAddr, _ := ipv4ToUint32(getLastAddrInSubnet(ipCIDR, subnetLen))
+
+	if rangeMin < firstAddr {
+		rangeMin = firstAddr
+	}
+	if rangeMax > lastAddr {
+		rangeMax = lastAddr
+	}
+
+	minAddr, _ := ipv4Uint32ToString(rangeMin)
+	maxAddr, _ := ipv4Uint32ToString(rangeMax)
+
+	return minAddr + "-" + maxAddr
+}
+
+// ClearBitsOutsideRange sets all IPs outside range as used
+func ClearBitsOutsideRange(ipAllocMap *bitset.BitSet, ipRange string, subnetLen uint) {
+	var i uint32
+	rangeMin, _ := ipv4ToUint32(getFirstAddrInRange(ipRange))
+	rangeMax, _ := ipv4ToUint32(getLastAddrInRange(ipRange, subnetLen))
+	firstAddr, _ := ipv4ToUint32(GetSubnetAddr(ipRange, subnetLen))
+	lastAddr, _ := ipv4ToUint32(getLastAddrInSubnet(ipRange, subnetLen))
+
+	// Set bits lower than rangeMin as used
+	for i = 0; i < (rangeMin - firstAddr); i++ {
+		ipAllocMap.Clear(uint(i))
+	}
+
+	// Set bits greater than the rangeMax as used
+	for i = ((rangeMin - firstAddr) + ((rangeMax - rangeMin) + 1)); i < (lastAddr - firstAddr); i++ {
+		ipAllocMap.Clear(uint(i))
 	}
 }
 
@@ -601,9 +643,7 @@ func getLastAddrInRange(ipRange string, subnetLen uint) string {
 	var lastIP string
 
 	if isSubnetIPRange(ipRange) {
-		subnetRange := strings.Split(ipRange, "-")
-		commonSubnetPrefix := ipRange[0 : strings.LastIndex(subnetRange[0], ".")+1]
-		lastIP = commonSubnetPrefix + strings.Split(ipRange, "-")[1]
+		lastIP = strings.Split(ipRange, "-")[1]
 	} else {
 		lastIP = getLastAddrInSubnet(ipRange, subnetLen)
 	}
@@ -639,4 +679,55 @@ func GetMyAddr() (string, error) {
 	}
 
 	return "", errors.New("Could not find ip addr")
+}
+
+// PortToHostIPMAC gets IP and MAC based on port number
+func PortToHostIPMAC(port int) (string, string) {
+	b0 := hostPvtSubnet >> 24
+	b1 := (hostPvtSubnet >> 16) & 0xff
+	b2 := (port >> 8) & 0xff
+	b3 := port & 0xff
+	ipStr := fmt.Sprintf("%d.%d.%d.%d/16", b0, b1, b2, b3)
+	macStr := fmt.Sprintf("02:02:%02x:%02x:%02x:%02x", b0, b1, b2, b3)
+
+	return ipStr, macStr
+}
+
+// GetHostIntfName gets the host access interface name
+func GetHostIntfName(intf string) string {
+	return strings.Replace(intf, "vport", "hport", 1)
+}
+
+// SetIPMasquerade sets a ip masquerade rule.
+func SetIPMasquerade(intf, netmask string) error {
+	ipTablesPath, err := osexec.LookPath("iptables")
+	if err != nil {
+		return err
+	}
+	out, err := osexec.Command(ipTablesPath, "-t", "nat", "-A", "POSTROUTING", "-s", netmask,
+		"!", "-o", intf, "-j", "MASQUERADE").CombinedOutput()
+	if err != nil {
+		log.Errorf("Setting ip tables failed: %v %s", err, out)
+	} else {
+		log.Infof("####Set ip tables success: %s", out)
+	}
+
+	return err
+}
+
+// HostIfToIP gets IP based on ifname
+func HostIfToIP(hostIf string) (string, error) {
+	num := strings.Replace(hostIf, "hport", "", 1)
+	port, err := strconv.Atoi(num)
+	if err != nil {
+		return "", err
+	}
+
+	b0 := hostPvtSubnet >> 24
+	b1 := (hostPvtSubnet >> 16) & 0xff
+	b2 := (port >> 8) & 0xff
+	b3 := port & 0xff
+	ipStr := fmt.Sprintf("%d.%d.%d.%d/16", b0, b1, b2, b3)
+
+	return ipStr, nil
 }

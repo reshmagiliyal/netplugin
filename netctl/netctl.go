@@ -106,8 +106,8 @@ func addRule(ctx *cli.Context) {
 		}
 
 		// If from EPG is specified, make sure from network is specified too
-		if ctx.String("from-group") != "" && ctx.String("from-network") == "" {
-			errExit(ctx, exitHelp, "from-group argument requires -from-network too", false)
+		if ctx.String("from-group") != "" && ctx.String("from-network") != "" {
+			errExit(ctx, exitHelp, "Can't specify both from-group argument and -from-network ", false)
 		}
 	} else if dir == "out" {
 		if ctx.String("from-group") != "" {
@@ -121,8 +121,8 @@ func addRule(ctx *cli.Context) {
 		}
 
 		// If to EPG is specified, make sure to network is specified too
-		if ctx.String("to-group") != "" && ctx.String("to-network") == "" {
-			errExit(ctx, exitHelp, "-to-group argument requires -to-network too", false)
+		if ctx.String("to-group") != "" && ctx.String("to-network") != "" {
+			errExit(ctx, exitHelp, "Can't specify both -to-group and -to-network", false)
 		}
 	} else {
 		errExit(ctx, exitHelp, "Unknown direction", false)
@@ -868,18 +868,21 @@ func createServiceLB(ctx *cli.Context) {
 	serviceName := ctx.Args()[0]
 	serviceSubnet := ctx.String("network")
 	tenantName := ctx.String("tenant")
-
+	if len(tenantName) == 0 {
+		tenantName = "default"
+	}
 	selectors := ctx.StringSlice("selector")
 	ports := ctx.StringSlice("port")
 	ipAddress := ctx.String("preferred-ip")
-	errCheck(ctx, getClient(ctx).ServiceLBPost(&contivClient.ServiceLB{
+	service := &contivClient.ServiceLB{
 		ServiceName: serviceName,
 		TenantName:  tenantName,
 		NetworkName: serviceSubnet,
-		Selectors:   selectors,
-		Ports:       ports,
 		IpAddress:   ipAddress,
-	}))
+	}
+	service.Selectors = append(service.Selectors, selectors...)
+	service.Ports = append(service.Ports, ports...)
+	errCheck(ctx, getClient(ctx).ServiceLBPost(service))
 }
 
 //deleteServiceLB is a netctl interface routine to delete
@@ -889,10 +892,12 @@ func deleteServiceLB(ctx *cli.Context) {
 
 	serviceName := ctx.Args()[0]
 	tenantName := ctx.String("tenant")
-
+	if len(tenantName) == 0 {
+		tenantName = "default"
+	}
 	fmt.Printf("Deleting Service  %s,%s", serviceName, tenantName)
 
-	errCheck(ctx, getClient(ctx).ServiceLBDelete(serviceName, tenantName))
+	errCheck(ctx, getClient(ctx).ServiceLBDelete(tenantName, serviceName))
 }
 
 //listServiceLB is a netctl interface routine to delete
@@ -902,7 +907,9 @@ func listServiceLB(ctx *cli.Context) {
 
 	serviceName := ctx.Args()[0]
 	tenantName := ctx.String("tenantName")
-
+	if len(tenantName) == 0 {
+		tenantName = "default"
+	}
 	svcList, err := getClient(ctx).ServiceLBList()
 	errCheck(ctx, err)
 
@@ -992,7 +999,7 @@ func createExternalContracts(ctx *cli.Context) {
 
 	tenant := ctx.String("tenant")
 
-	contracts := ctx.StringSlice("contracts")
+	contracts := ctx.StringSlice("contract")
 	if len(contracts) == 0 {
 		errExit(ctx, exitHelp, "Contracts not provided", false)
 	}
@@ -1005,4 +1012,20 @@ func createExternalContracts(ctx *cli.Context) {
 		ContractsType:      contractsType,
 		Contracts:          contracts,
 	}))
+}
+
+func inspectServiceLb(ctx *cli.Context) {
+	argCheck(1, ctx)
+
+	tenant := ctx.String("tenant")
+	service := ctx.Args()[0]
+
+	logrus.Infof("Inspeting service: %s tenant: %s", service, tenant)
+
+	net, err := getClient(ctx).ServiceLBInspect(tenant, service)
+	errCheck(ctx, err)
+
+	content, err := json.MarshalIndent(net, "", "  ")
+	os.Stdout.Write(content)
+	os.Stdout.WriteString("\n")
 }

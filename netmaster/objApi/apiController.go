@@ -18,6 +18,9 @@ package objApi
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/contiv/contivmodel"
 	"github.com/contiv/netplugin/core"
 	"github.com/contiv/netplugin/netmaster/gstate"
@@ -26,8 +29,6 @@ import (
 	"github.com/contiv/netplugin/netmaster/mastercfg"
 	"github.com/contiv/netplugin/utils"
 	"github.com/contiv/objdb/modeldb"
-	"strconv"
-	"strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
@@ -232,10 +233,6 @@ func (ac *APIController) AppProfileCreate(prof *contivModel.AppProfile) error {
 		return core.Errorf("Tenant %s not found", prof.TenantName)
 	}
 
-	// Setup links
-	modeldb.AddLink(&prof.Links.Tenant, tenant)
-	modeldb.AddLinkSet(&tenant.LinkSets.AppProfiles, prof)
-
 	for _, epg := range prof.EndpointGroups {
 		epgKey := prof.TenantName + ":" + epg
 		epgObj := contivModel.FindEndpointGroup(epgKey)
@@ -251,14 +248,18 @@ func (ac *APIController) AppProfileCreate(prof *contivModel.AppProfile) error {
 		}
 	}
 
+	// Setup links
+	modeldb.AddLink(&prof.Links.Tenant, tenant)
+	modeldb.AddLinkSet(&tenant.LinkSets.AppProfiles, prof)
+
 	err := tenant.Write()
 	if err != nil {
 		log.Errorf("Error updating tenant state(%+v). Err: %v", tenant, err)
 		return err
 	}
 
-	CreateAppNw(prof)
-	return nil
+	err = CreateAppNw(prof)
+	return err
 }
 
 // AppProfileUpdate updates app
@@ -313,8 +314,8 @@ func (ac *APIController) AppProfileUpdate(oldProf, newProf *contivModel.AppProfi
 
 	// update the app nw
 	DeleteAppNw(oldProf)
-	CreateAppNw(oldProf)
-	return nil
+	lErr := CreateAppNw(oldProf)
+	return lErr
 }
 
 // AppProfileDelete delete the app
@@ -362,9 +363,8 @@ func (ac *APIController) EndpointGetOper(endpoint *contivModel.EndpointInspect) 
 	// TODO avoid linear read
 	epCfgs, err := readEp.ReadAll()
 	if err == nil {
-		for idx, epCfg := range epCfgs {
+		for _, epCfg := range epCfgs {
 			ep := epCfg.(*mastercfg.CfgEndpointState)
-			log.Infof("read ep key[%d] %s, populating state \n", idx, ep.ID)
 			if strings.Contains(ep.ContainerID, endpoint.Oper.Key) {
 				endpoint.Oper.Network = ep.NetID
 				endpoint.Oper.Name = ep.ContName
@@ -793,12 +793,38 @@ func (ac *APIController) NetworkGetOper(network *contivModel.NetworkInspect) err
 	}
 
 	network.Oper.AllocatedAddressesCount = nwCfg.EpAddrCount
+	network.Oper.AvailableIPAddresses = master.ListAvailableIPs(nwCfg)
 	network.Oper.AllocatedIPAddresses = master.ListAllocatedIPs(nwCfg)
 	network.Oper.DnsServerIP = nwCfg.DNSServer
 	network.Oper.ExternalPktTag = nwCfg.ExtPktTag
 	network.Oper.NumEndpoints = nwCfg.EpCount
 	network.Oper.PktTag = nwCfg.PktTag
 
+	readEp := &mastercfg.CfgEndpointState{}
+	readEp.StateDriver = stateDriver
+	epCfgs, err := readEp.ReadAll()
+	if err == nil {
+		for _, epCfg := range epCfgs {
+			ep := epCfg.(*mastercfg.CfgEndpointState)
+			if ep.NetID == networkID {
+				epOper := contivModel.EndpointOper{}
+				epOper.Network = ep.NetID
+				epOper.Name = ep.ContName
+				epOper.ServiceName = ep.ServiceName
+				epOper.EndpointGroupID = ep.EndpointGroupID
+				epOper.EndpointGroupKey = ep.EndpointGroupKey
+				epOper.AttachUUID = ep.AttachUUID
+				epOper.IpAddress = []string{ep.IPAddress, ep.IPv6Address}
+				epOper.MacAddress = ep.MacAddress
+				epOper.HomingHost = ep.HomingHost
+				epOper.IntfName = ep.IntfName
+				epOper.VtepIP = ep.VtepIP
+				epOper.Labels = fmt.Sprintf("%s", ep.Labels)
+				epOper.ContainerID = ep.ContainerID
+				network.Oper.Endpoints = append(network.Oper.Endpoints, epOper)
+			}
+		}
+	}
 	return nil
 }
 
@@ -948,6 +974,12 @@ func (ac *APIController) PolicyUpdate(policy, params *contivModel.Policy) error 
 func (ac *APIController) PolicyDelete(policy *contivModel.Policy) error {
 	log.Infof("Received PolicyDelete: %+v", policy)
 
+	// Find Tenant
+	tenant := contivModel.FindTenant(policy.TenantName)
+	if tenant == nil {
+		return core.Errorf("Tenant %s not found", policy.TenantName)
+	}
+
 	// Check if any endpoint group is using the Policy
 	if len(policy.LinkSets.EndpointGroups) != 0 {
 		return core.Errorf("Policy is being used")
@@ -960,6 +992,16 @@ func (ac *APIController) PolicyDelete(policy *contivModel.Policy) error {
 		if err != nil {
 			log.Errorf("Error deleting the rule: %s. Err: %v", key, err)
 		}
+	}
+
+	//Remove Links
+	modeldb.RemoveLinkSet(&tenant.LinkSets.Policies, policy)
+
+	// Save the tenant too since we added the links
+	err := tenant.Write()
+	if err != nil {
+		log.Errorf("Error updating tenant state(%+v). Err: %v", tenant, err)
+		return err
 	}
 
 	return nil
@@ -1175,7 +1217,30 @@ func (ac *APIController) TenantDelete(tenant *contivModel.Tenant) error {
 		return err
 	}
 
-	// FIXME: Should we walk all objects under the tenant and delete it?
+	// if the tenant has associated app profiles, fail the delete
+	profCount := len(tenant.LinkSets.AppProfiles)
+	if profCount != 0 {
+		return core.Errorf("cannot delete %s, has %d app profiles",
+			tenant.TenantName, profCount)
+	}
+	// if the tenant has associated epgs, fail the delete
+	epgCount := len(tenant.LinkSets.EndpointGroups)
+	if epgCount != 0 {
+		return core.Errorf("cannot delete %s has %d endpoint groups",
+			tenant.TenantName, epgCount)
+	}
+	// if the tenant has associated policies, fail the delete
+	policyCount := len(tenant.LinkSets.Policies)
+	if policyCount != 0 {
+		return core.Errorf("cannot delete %s has %d policies",
+			tenant.TenantName, policyCount)
+	}
+	// if the tenant has associated networks, fail the delete
+	nwCount := len(tenant.LinkSets.Networks)
+	if nwCount != 0 {
+		return core.Errorf("cannot delete %s has %d networks",
+			tenant.TenantName, nwCount)
+	}
 
 	// Delete the tenant
 	err = master.DeleteTenantID(stateDriver, tenant.TenantName)
@@ -1277,9 +1342,6 @@ func (ac *APIController) ServiceLBCreate(serviceCfg *contivModel.ServiceLB) erro
 	if serviceCfg.ServiceName == "" {
 		return core.Errorf("Invalid service name")
 	}
-	if serviceCfg.TenantName == "" {
-		serviceCfg.TenantName = "default"
-	}
 
 	if len(serviceCfg.Selectors) == 0 {
 		return core.Errorf("Invalid selector options")
@@ -1327,7 +1389,20 @@ func (ac *APIController) ServiceLBCreate(serviceCfg *contivModel.ServiceLB) erro
 
 //ServiceLBUpdate updates service object
 func (ac *APIController) ServiceLBUpdate(oldServiceCfg *contivModel.ServiceLB, serviceCfg *contivModel.ServiceLB) error {
-	return ac.ServiceLBCreate(serviceCfg)
+	log.Infof("Received Service Load Balancer update: %+v", serviceCfg)
+	err := ac.ServiceLBCreate(serviceCfg)
+	if err != nil {
+		return err
+	}
+	oldServiceCfg.ServiceName = serviceCfg.ServiceName
+	oldServiceCfg.TenantName = serviceCfg.TenantName
+	oldServiceCfg.NetworkName = serviceCfg.NetworkName
+	oldServiceCfg.IpAddress = serviceCfg.IpAddress
+	oldServiceCfg.Selectors = nil
+	oldServiceCfg.Ports = nil
+	oldServiceCfg.Selectors = append(oldServiceCfg.Selectors, serviceCfg.Selectors...)
+	oldServiceCfg.Ports = append(oldServiceCfg.Ports, serviceCfg.Ports...)
+	return nil
 }
 
 //ServiceLBDelete deletes service object
@@ -1338,9 +1413,7 @@ func (ac *APIController) ServiceLBDelete(serviceCfg *contivModel.ServiceLB) erro
 	if serviceCfg.ServiceName == "" {
 		return core.Errorf("Invalid service name")
 	}
-	if serviceCfg.TenantName == "" {
-		serviceCfg.TenantName = "default"
-	}
+
 	// Get the state driver
 	stateDriver, err := utils.GetStateDriver()
 	if err != nil {
@@ -1353,6 +1426,53 @@ func (ac *APIController) ServiceLBDelete(serviceCfg *contivModel.ServiceLB) erro
 		log.Errorf("Error deleting Service Load Balancer object {%+v}. Err: %v", serviceCfg.ServiceName, err)
 		return err
 	}
+	return nil
+
+}
+
+//ServiceLBGetOper inspects the oper state of service lb object
+func (ac *APIController) ServiceLBGetOper(serviceLB *contivModel.ServiceLBInspect) error {
+	log.Infof("Received Service load balancer inspect : %+v", serviceLB)
+
+	// Get the state driver
+	stateDriver, err := utils.GetStateDriver()
+	if err != nil {
+		return err
+	}
+	serviceID := master.GetServiceID(serviceLB.Config.ServiceName, serviceLB.Config.TenantName)
+	service := mastercfg.ServiceLBDb[serviceID]
+	if service == nil {
+		return errors.New("Invalid Service name. Oper state does not exist")
+	}
+	serviceLB.Oper.ServiceVip = service.IPAddress
+	count := 0
+	for _, provider := range service.Providers {
+
+		epCfg := &mastercfg.CfgEndpointState{}
+		epCfg.StateDriver = stateDriver
+		err := epCfg.Read(provider.EpIDKey)
+		if err != nil {
+			continue
+		}
+		epOper := contivModel.EndpointOper{}
+		epOper.Network = epCfg.NetID
+		epOper.Name = epCfg.ContName
+		epOper.ServiceName = service.ServiceName //FIXME:fill in service name in endpoint
+		epOper.EndpointGroupID = epCfg.EndpointGroupID
+		epOper.EndpointGroupKey = epCfg.EndpointGroupKey
+		epOper.AttachUUID = epCfg.AttachUUID
+		epOper.IpAddress = []string{epCfg.IPAddress, epCfg.IPv6Address}
+		epOper.MacAddress = epCfg.MacAddress
+		epOper.HomingHost = epCfg.HomingHost
+		epOper.IntfName = epCfg.IntfName
+		epOper.VtepIP = epCfg.VtepIP
+		epOper.Labels = fmt.Sprintf("%s", epCfg.Labels)
+		epOper.ContainerID = epCfg.ContainerID
+		serviceLB.Oper.Providers = append(serviceLB.Oper.Providers, epOper)
+		count++
+		epCfg = nil
+	}
+	serviceLB.Oper.NumProviders = count
 	return nil
 
 }

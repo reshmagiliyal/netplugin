@@ -40,6 +40,16 @@ func (d *FakeNetEpDriver) DeleteEndpoint(id string) (err error) {
 	return core.Errorf("Not implemented")
 }
 
+// CreateHostAccPort is not implemented.
+func (d *FakeNetEpDriver) CreateHostAccPort(id string) (err error) {
+	return core.Errorf("Not implemented")
+}
+
+// DeleteHostAccPort is not implemented.
+func (d *FakeNetEpDriver) DeleteHostAccPort(id string) (err error) {
+	return core.Errorf("Not implemented")
+}
+
 // AddPeerHost is not implemented.
 func (d *FakeNetEpDriver) AddPeerHost(node core.ServiceInfo) error {
 	return core.Errorf("Not implemented")
@@ -82,4 +92,14 @@ func (d *FakeNetEpDriver) DelSvcSpec(svcName string, spec *core.ServiceSpec) err
 
 // SvcProviderUpdate is not implemented.
 func (d *FakeNetEpDriver) SvcProviderUpdate(svcName string, providers []string) {
+}
+
+// GetEndpointStats is not implemented
+func (d *FakeNetEpDriver) GetEndpointStats() ([]byte, error) {
+	return []byte{}, core.Errorf("Not implemented")
+}
+
+// InspectState is not implemented
+func (d *FakeNetEpDriver) InspectState() ([]byte, error) {
+	return []byte{}, core.Errorf("Not implemented")
 }

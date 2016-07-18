@@ -769,7 +769,7 @@ func (self *Vrouter) RemoveRemoteIpv6Flow(endpoint *OfnetEndpoint) error {
 }
 
 // AddUplink adds an uplink to the switch
-func (vr *Vrouter) AddUplink(portNo uint32) error {
+func (vr *Vrouter) AddUplink(portNo uint32, ifname string) error {
 	// Nothing to do
 	return nil
 }
@@ -793,6 +793,33 @@ func (vr *Vrouter) DelSvcSpec(svcName string, spec *ServiceSpec) error {
 // SvcProviderUpdate Service Proxy Back End update
 func (vr *Vrouter) SvcProviderUpdate(svcName string, providers []string) {
 	vr.svcProxy.ProviderUpdate(svcName, providers)
+}
+
+// MultipartReply handles multipart replies
+func (vr *Vrouter) MultipartReply(sw *ofctrl.OFSwitch, reply *openflow13.MultipartReply) {
+	if reply.Type == openflow13.MultipartType_Flow {
+		vr.svcProxy.FlowStats(reply)
+	}
+}
+
+// GetEndpointStats fetches ep stats
+func (vr *Vrouter) GetEndpointStats() ([]*OfnetEndpointStats, error) {
+	return vr.svcProxy.GetEndpointStats()
+}
+
+func (vr *Vrouter) InspectState() (interface{}, error) {
+	vrouterExport := struct {
+		PolicyAgent *PolicyAgent // Policy agent
+		SvcProxy    interface{}  // Service proxy
+		// VlanDb      map[uint16]*Vlan // Database of known vlans
+		MyRouterMac net.HardwareAddr // Router Mac to be used
+	}{
+		vr.policyAgent,
+		vr.svcProxy.InspectState(),
+		// vr.vlanDb,
+		vr.myRouterMac,
+	}
+	return vrouterExport, nil
 }
 
 // initialize Fgraph on the switch

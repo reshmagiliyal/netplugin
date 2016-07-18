@@ -19,8 +19,16 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
-	"github.com/Sirupsen/logrus/hooks/syslog"
+	"log/syslog"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/user"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/contiv/netplugin/core"
 	"github.com/contiv/netplugin/mgmtfn/dockplugin"
 	"github.com/contiv/netplugin/mgmtfn/k8splugin"
@@ -34,15 +42,12 @@ import (
 	"github.com/contiv/netplugin/version"
 	"github.com/docker/engine-api/client"
 	"github.com/docker/engine-api/types"
+	"github.com/gorilla/mux"
 	"github.com/samalba/dockerclient"
 	"golang.org/x/net/context"
-	"log/syslog"
-	"net/url"
-	"os"
-	"os/user"
-	"strconv"
-	"strings"
-	"time"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus/hooks/syslog"
 )
 
 // a daemon based on etcd client's Watch interface to trigger plugin's
@@ -276,7 +281,7 @@ func processBgpEvent(netPlugin *plugin.NetPlugin, opts cliOpts, hostID string, i
 	var err error
 
 	if opts.hostLabel != hostID {
-		log.Errorf("Ignoring Bgp Event on this host")
+		log.Debugf("Ignoring Bgp Event on this host")
 		return err
 	}
 	netPlugin.Lock()
@@ -313,7 +318,6 @@ func processStateEvent(netPlugin *plugin.NetPlugin, opts cliOpts, rsps chan core
 			isDelete = true
 			eventStr = "delete"
 		} else if rsp.Prev != nil {
-			log.Infof("Received a modify event, ignoring it")
 			if bgpCfg, ok := currentState.(*mastercfg.CfgBgpState); ok {
 				log.Infof("Received %q for Bgp: %q", eventStr, bgpCfg.Hostname)
 				processBgpEvent(netPlugin, opts, bgpCfg.Hostname, isDelete)
@@ -331,7 +335,7 @@ func processStateEvent(netPlugin *plugin.NetPlugin, opts cliOpts, rsps chan core
 				processSvcProviderUpdEvent(netPlugin, opts, svcProvider, isDelete)
 			}
 
-			log.Infof("Received a modify event, ignoring it")
+			log.Debugf("Received a modify event, ignoring it")
 			continue
 
 		}
@@ -418,9 +422,10 @@ func handleEvents(netPlugin *plugin.NetPlugin, opts cliOpts) error {
 
 	go handleSvcProviderUpdEvents(netPlugin, opts, recvErr)
 
-	docker, _ := dockerclient.NewDockerClient("unix:///var/run/docker.sock", nil)
-	go docker.StartMonitorEvents(handleDockerEvents, recvErr, netPlugin, recvErr)
-
+	if opts.pluginMode == "docker" {
+		docker, _ := dockerclient.NewDockerClient("unix:///var/run/docker.sock", nil)
+		go docker.StartMonitorEvents(handleDockerEvents, recvErr, netPlugin, recvErr)
+	}
 	err := <-recvErr
 	if err != nil {
 		log.Errorf("Failure occured. Error: %s", err)
@@ -428,6 +433,46 @@ func handleEvents(netPlugin *plugin.NetPlugin, opts cliOpts) error {
 	}
 
 	return nil
+}
+
+// serveRequests serve REST api requests
+func serveRequests(netPlugin *plugin.NetPlugin) {
+	listenURL := ":9090"
+	router := mux.NewRouter()
+
+	// Add REST routes
+	s := router.Methods("GET").Subrouter()
+	s.HandleFunc("/svcstats", func(w http.ResponseWriter, r *http.Request) {
+		stats, err := netPlugin.GetEndpointStats()
+		if err != nil {
+			log.Errorf("Error fetching stats from driver. Err: %v", err)
+			http.Error(w, "Error fetching stats from driver", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(stats)
+	})
+	s.HandleFunc("/inspect/driver", func(w http.ResponseWriter, r *http.Request) {
+		driverState, err := netPlugin.InspectState()
+		if err != nil {
+			log.Errorf("Error fetching driver state. Err: %v", err)
+			http.Error(w, "Error fetching driver state", http.StatusInternalServerError)
+			return
+		}
+		w.Write(driverState)
+	})
+
+	// Create HTTP server and listener
+	server := &http.Server{Handler: router}
+	listener, err := net.Listen("tcp", listenURL)
+	if nil != err {
+		log.Fatalln(err)
+	}
+
+	log.Infof("Netplugin listening on %s", listenURL)
+
+	// start server
+	go server.Serve(listener)
 }
 
 func configureSyslog(syslogParam string) {
@@ -470,7 +515,7 @@ func main() {
 	}
 
 	// parse rest of the args that require creating state
-	flagSet = flag.NewFlagSet("netd", flag.ExitOnError)
+	flagSet = flag.NewFlagSet("netplugin", flag.ExitOnError)
 	flagSet.BoolVar(&opts.debug,
 		"debug",
 		false,
@@ -506,7 +551,7 @@ func main() {
 	flagSet.StringVar(&opts.vlanIntf,
 		"vlan-if",
 		"",
-		"My VTEP ip address")
+		"VLAN uplink interface")
 	flagSet.BoolVar(&opts.version,
 		"version",
 		false,
@@ -631,7 +676,12 @@ func main() {
 		k8splugin.InitKubServiceWatch(netPlugin)
 	}
 
+	// start service REST requests
+	serveRequests(netPlugin)
+
+	// handle events
 	if err := handleEvents(netPlugin, opts); err != nil {
+		log.Infof("Netplugin exiting due to error: %v", err)
 		os.Exit(1)
 	}
 }
@@ -723,9 +773,15 @@ func handleDockerEvents(event *dockerclient.Event, ec chan error, args ...interf
 		}
 		if event.ID != "" {
 			labelMap := getLabelsFromContainerInspect(&containerInfo)
-
+			if len(labelMap) == 0 {
+				//Ignore container without labels
+				return
+			}
 			containerTenant := getTenantFromContainerInspect(&containerInfo)
-			network, ipAddress := getEpNetworkInfoFromContainerInspect(&containerInfo)
+			network, ipAddress, err := getEpNetworkInfoFromContainerInspect(&containerInfo)
+			if err != nil {
+				log.Errorf("Error getting container network info for %v.Err:%s", event.ID, err)
+			}
 			container := getContainerFromContainerInspect(&containerInfo)
 			if ipAddress != "" {
 				//Create provider info
@@ -742,15 +798,12 @@ func handleDockerEvents(event *dockerclient.Event, ec chan error, args ...interf
 					providerUpdReq.Labels[k] = v
 				}
 			}
-			if len(labelMap) == 0 {
-				//Ignore container without labels
-				return
-			}
+
 			var svcProvResp master.SvcProvUpdateResponse
 
 			log.Infof("Sending Provider create request to master: {%+v}", providerUpdReq)
 
-			err := cluster.MasterPostReq("/plugin/svcProviderUpdate", providerUpdReq, &svcProvResp)
+			err = cluster.MasterPostReq("/plugin/svcProviderUpdate", providerUpdReq, &svcProvResp)
 			if err != nil {
 				log.Errorf("Event: 'start' , Http error posting service provider update, Error:%s", err)
 			}
@@ -792,21 +845,27 @@ func getTenantFromContainerInspect(containerInfo *types.ContainerJSON) string {
 }
 
 /*getEpNetworkInfoFromContainerInspect inspects the network info from containerinfo returned by dockerclient*/
-func getEpNetworkInfoFromContainerInspect(containerInfo *types.ContainerJSON) (string, string) {
+func getEpNetworkInfoFromContainerInspect(containerInfo *types.ContainerJSON) (string, string, error) {
 	var networkName string
 	var IPAddress string
-
+	var networkUUID string
 	if containerInfo != nil && containerInfo.NetworkSettings != nil {
-		for network, endpoint := range containerInfo.NetworkSettings.Networks {
-			networkName = network
-			if strings.Contains(network, "/") {
-				//network name is of the form networkname/tenantname for non default tenant
-				networkName = strings.Split(network, "/")[0]
-			}
+		for _, endpoint := range containerInfo.NetworkSettings.Networks {
 			IPAddress = endpoint.IPAddress
+			networkUUID = endpoint.NetworkID
+			_, network, serviceName, err := dockplugin.GetDockerNetworkName(networkUUID)
+			if err != nil {
+				log.Errorf("Error getting docker networkname for network uuid : %s", networkUUID)
+				return "", "", err
+			}
+			if serviceName != "" {
+				networkName = serviceName
+			} else {
+				networkName = network
+			}
 		}
 	}
-	return networkName, IPAddress
+	return networkName, IPAddress, nil
 }
 
 func getContainerFromContainerInspect(containerInfo *types.ContainerJSON) string {

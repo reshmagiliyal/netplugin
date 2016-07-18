@@ -109,6 +109,8 @@ type NetworkDriver interface {
 	DeleteNetwork(id, nwType, encap string, pktTag, extPktTag int, gateway string, tenant string) error
 	CreateEndpoint(id string) error
 	DeleteEndpoint(id string) error
+	CreateHostAccPort(portName string) error
+	DeleteHostAccPort(id string) error
 	AddPeerHost(node ServiceInfo) error
 	DeletePeerHost(node ServiceInfo) error
 	AddMaster(node ServiceInfo) error
@@ -121,6 +123,10 @@ type NetworkDriver interface {
 	DelSvcSpec(svcName string, spec *ServiceSpec) error
 	// Service Proxy Back End update
 	SvcProviderUpdate(svcName string, providers []string)
+	// Get endpoint stats
+	GetEndpointStats() ([]byte, error)
+	// return current state in json form
+	InspectState() ([]byte, error)
 }
 
 // WatchState is used to provide a difference between core.State structs by

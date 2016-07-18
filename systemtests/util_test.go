@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 )
@@ -240,6 +242,15 @@ func (s *systemtestSuite) runContainersSerial(num int, withService bool, network
 	return containers, nil
 }
 
+func randSeq(n int) string {
+	letters := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
+}
+
 func (s *systemtestSuite) runContainersOnNode(num int, networkName string, n *node) ([]*container, error) {
 	containers := []*container{}
 	mutex := sync.Mutex{}
@@ -251,6 +262,7 @@ func (s *systemtestSuite) runContainersOnNode(num int, networkName string, n *no
 			spec := containerSpec{
 				imageName:   "alpine",
 				networkName: networkName,
+				name:        fmt.Sprintf("%s-%d-%s", n.Name(), i, randSeq(16)),
 			}
 
 			cont, err := n.runContainer(spec)
@@ -346,7 +358,7 @@ func (s *systemtestSuite) pingTest(containers []*container) error {
 
 	for _, cont := range containers {
 		for _, ip := range ips {
-			go func(cont *container, ip string) { errChan <- cont.checkPing(ip) }(cont, ip)
+			go func(cont *container, ip string) { errChan <- cont.checkPingWithCount(ip, 3) }(cont, ip)
 		}
 	}
 
@@ -361,7 +373,7 @@ func (s *systemtestSuite) pingTest(containers []*container) error {
 
 		for _, cont := range containers {
 			for _, ipv6 := range v6ips {
-				go func(cont *container, ipv6 string) { v6errChan <- cont.checkPing6(ipv6) }(cont, ipv6)
+				go func(cont *container, ipv6 string) { v6errChan <- cont.checkPing6WithCount(ipv6, 2) }(cont, ipv6)
 			}
 		}
 
@@ -782,4 +794,73 @@ func (s *systemtestSuite) startListenersOnProviders(containers []*container, por
 	}
 
 	return nil
+}
+
+func (s *systemtestSuite) verifyVTEPs() error {
+	// get all expected VTEPs
+	var err error
+
+	expVTEPs := make(map[string]bool)
+	for _, n := range s.nodes {
+		vtep, err := n.getIPAddr("eth1")
+		if err != nil {
+			logrus.Errorf("Error getting eth1 IP address for node %s", n.Name())
+			return err
+		}
+
+		expVTEPs[vtep] = true
+	}
+
+	failNode := ""
+	err = nil
+	dbgOut := ""
+	for try := 0; try < 20; try++ {
+		for _, n := range s.nodes {
+			dbgOut, err = n.verifyVTEPs(expVTEPs)
+			if err != nil {
+				failNode = n.Name()
+				break
+			}
+		}
+
+		if err == nil {
+			logrus.Info("VTEPs %+v verified on all nodes", expVTEPs)
+			return nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	logrus.Errorf("Node %s failed to verify all VTEPs", failNode)
+	logrus.Infof("Debug output:\n %s", dbgOut)
+	return errors.New("Failed to verify VTEPs after 20 sec")
+}
+
+func (s *systemtestSuite) verifyEPs(containers []*container) error {
+	var err error
+
+	// get the list of eps to verify
+	epList := make([]string, len(containers))
+	for ix, cont := range containers {
+		epList[ix] = cont.eth0.ip
+	}
+
+	err = nil
+	dbgOut := ""
+	for try := 0; try < 20; try++ {
+		for _, n := range s.nodes {
+			dbgOut, err = n.verifyEPs(epList)
+			if err != nil {
+				break
+			}
+		}
+
+		if err == nil {
+			logrus.Info("EPs %+v verified on all nodes", epList)
+			return nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+	logrus.Errorf("Failed to verify EPs after 20 sec %v", err)
+	logrus.Info("Debug output:\n %s", dbgOut)
+	return err
 }

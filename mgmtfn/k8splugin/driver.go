@@ -33,8 +33,11 @@ import (
 	"github.com/contiv/netplugin/netmaster/mastercfg"
 	"github.com/contiv/netplugin/netplugin/cluster"
 	"github.com/contiv/netplugin/utils"
+	"github.com/contiv/netplugin/utils/netutils"
 	"github.com/vishvananda/netlink"
 )
+
+const hostGWIP = "172.20.255.254"
 
 // epSpec contains the spec of the Endpoint to be created
 type epSpec struct {
@@ -207,6 +210,25 @@ func nsToPID(ns string) (int, error) {
 	return strconv.Atoi(elements[2])
 }
 
+func moveToNS(pid int, ifname string) error {
+	// find the link
+	link, err := getLink(ifname)
+	if err != nil {
+		log.Errorf("unable to find link %q. Error %q", ifname, err)
+		return err
+	}
+
+	// move to the desired netns
+	err = netlink.LinkSetNsPid(link, pid)
+	if err != nil {
+		log.Errorf("unable to move interface %s to pid %d. Error: %s",
+			ifname, pid, err)
+		return err
+	}
+
+	return nil
+}
+
 // setIfAttrs sets the required attributes for the container interface
 func setIfAttrs(pid int, ifname, cidr, newname string) error {
 
@@ -282,11 +304,11 @@ func setDefGw(pid int, gw, intfName string) error {
 	}
 	// set default gw
 	nsPid := fmt.Sprintf("%d", pid)
-	_, err = osexec.Command(nsenterPath, "-t", nsPid, "-n", "-F", "--", routePath, "add",
+	out, err := osexec.Command(nsenterPath, "-t", nsPid, "-n", "-F", "--", routePath, "add",
 		"default", "gw", gw, intfName).CombinedOutput()
 	if err != nil {
-		log.Errorf("unable to set default gw %s. Error: %s",
-			gw, err)
+		log.Errorf("unable to set default gw %s. Error: %s - %s",
+			gw, err, out)
 		return nil
 	}
 	return nil
@@ -318,6 +340,12 @@ func getEPSpec(pInfo *cniapi.CNIPodAttr) (*epSpec, error) {
 	return &resp, nil
 }
 
+func setErrorResp(resp *cniapi.RspAddPod, msg string, err error) {
+	resp.Result = 1
+	resp.ErrMsg = msg
+	resp.ErrInfo = fmt.Sprintf("Err: %v", err)
+}
+
 // addPod is the handler for pod additions
 func addPod(r *http.Request) (interface{}, error) {
 
@@ -340,18 +368,22 @@ func addPod(r *http.Request) (interface{}, error) {
 	epReq, err := getEPSpec(&pInfo)
 	if err != nil {
 		log.Errorf("Error getting labels. Err: %v", err)
+		setErrorResp(&resp, "Error getting labels", err)
 		return resp, err
 	}
 
 	ep, err := createEP(epReq)
 	if err != nil {
 		log.Errorf("Error creating ep. Err: %v", err)
+		setErrorResp(&resp, "Error creating EP", err)
 		return resp, err
 	}
 
 	// convert netns to pid that netlink needs
 	pid, err := nsToPID(pInfo.NwNameSpace)
 	if err != nil {
+		log.Errorf("Error moving to netns. Err: %v", err)
+		setErrorResp(&resp, "Error moving to netns", err)
 		return resp, err
 	}
 
@@ -359,16 +391,39 @@ func addPod(r *http.Request) (interface{}, error) {
 	err = setIfAttrs(pid, ep.PortName, ep.IPAddress, pInfo.IntfName)
 	if err != nil {
 		log.Errorf("Error setting interface attributes. Err: %v", err)
+		setErrorResp(&resp, "Error setting interface attributes", err)
 		return resp, err
+	}
+
+	// if Gateway is not specified on the nw, use the host gateway
+	gwIntf := pInfo.IntfName
+	gw := ep.Gateway
+	if gw == "" {
+		hostIf := netutils.GetHostIntfName(ep.PortName)
+		err = netPlugin.CreateHostAccPort(hostIf)
+		if err != nil {
+			log.Errorf("Error setting host access. Err: %v", err)
+		} else {
+			hostIP, _ := netutils.HostIfToIP(hostIf)
+			err = setIfAttrs(pid, hostIf, hostIP, "host1")
+			if err != nil {
+				log.Errorf("Move to pid %d failed", pid)
+			} else {
+				gw = hostGWIP
+				gwIntf = "host1"
+			}
+		}
 	}
 
 	// Set default gateway
-	err = setDefGw(pid, ep.Gateway, pInfo.IntfName)
+	err = setDefGw(pid, gw, gwIntf)
 	if err != nil {
 		log.Errorf("Error setting default gateway. Err: %v", err)
+		setErrorResp(&resp, "Error setting default gateway", err)
 		return resp, err
 	}
 
+	resp.Result = 0
 	resp.IPAddress = ep.IPAddress
 	resp.EndpointID = pInfo.InfraContainerID
 	return resp, nil
@@ -396,10 +451,13 @@ func deletePod(r *http.Request) (interface{}, error) {
 	epReq, err := getEPSpec(&pInfo)
 	if err != nil {
 		log.Errorf("Error getting labels. Err: %v", err)
+		setErrorResp(&resp, "Error getting labels", err)
 		return resp, err
 	}
 
+	netPlugin.DeleteHostAccPort(epReq.EndpointID)
 	err = epCleanUp(epReq)
+	resp.Result = 0
 	resp.EndpointID = pInfo.InfraContainerID
 	return resp, err
 }

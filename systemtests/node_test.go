@@ -1,6 +1,8 @@
 package systemtests
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -110,6 +112,31 @@ func (n *node) startNetmaster() error {
 func (n *node) cleanupDockerNetwork() error {
 	logrus.Infof("Cleaning up networks on %s", n.Name())
 	return n.tbnode.RunCommand("docker network rm $(docker network ls | grep netplugin | awk '{print $2}')")
+}
+
+func (n *node) checkDockerNetworkCreated(nwName string, expectedOp bool) error {
+	logrus.Infof("Checking whether docker network is created or not")
+	cmd := fmt.Sprintf("docker network ls | grep netplugin | grep %s | awk \"{print \\$2}\"", nwName)
+	logrus.Infof("Command to be executed is = %s", cmd)
+	op, err := n.tbnode.RunCommandWithOutput(cmd)
+
+	if err == nil {
+		// if networks are NOT meant to be created. In ACI mode netctl net create should
+		// not create docker networks
+		ret := strings.Contains(op, nwName)
+		if expectedOp == false && ret != true {
+			logrus.Infof("Network names Input=%s and Output=%s are NOT matching and thats expected", nwName, op)
+		} else {
+			// If netwokrs are meant to be created. In ACI Once you create EPG,
+			// respective docker network should get created.
+			if ret == true {
+				logrus.Infof("Network names are matching.")
+				return nil
+			}
+		}
+		return nil
+	}
+	return err
 }
 
 func (n *node) cleanupContainers() error {
@@ -243,7 +270,7 @@ func (n *node) checkForNetpluginErrors() error {
 	return nil
 }
 
-func (n *node) runCommandUntilNoError(cmd string) error {
+func (n *node) runCommandWithTimeOut(cmd string, tick, timeout time.Duration) error {
 	runCmd := func() (string, bool) {
 		if err := n.tbnode.RunCommand(cmd); err != nil {
 			return "", false
@@ -251,8 +278,12 @@ func (n *node) runCommandUntilNoError(cmd string) error {
 		return "", true
 	}
 	timeoutMessage := fmt.Sprintf("timeout reached trying to run %v on %q", cmd, n.Name())
-	_, err := utils.WaitForDone(runCmd, 10*time.Millisecond, 10*time.Second, timeoutMessage)
+	_, err := utils.WaitForDone(runCmd, tick, timeout, timeoutMessage)
 	return err
+}
+
+func (n *node) runCommandUntilNoError(cmd string) error {
+	return n.runCommandWithTimeOut(cmd, 10*time.Millisecond, 10*time.Second)
 }
 
 func (n *node) checkPingWithCount(ipaddr string, count int) error {
@@ -284,4 +315,102 @@ func (n *node) reloadNode() error {
 
 	logrus.Infof("Reloaded node %s. Output:\n%s", n.Name(), string(out))
 	return nil
+}
+
+func (n *node) restartClusterStore() error {
+	if strings.Contains(n.suite.clusterStore, "etcd://") {
+		logrus.Infof("Restarting etcd on %s", n.Name())
+
+		n.runCommand("sudo systemctl stop etcd")
+		time.Sleep(5 * time.Second)
+		n.runCommand("sudo systemctl start etcd")
+
+		logrus.Infof("Restarted etcd on %s", n.Name())
+	} else if strings.Contains(n.suite.clusterStore, "consul://") {
+		logrus.Infof("Restarting consul on %s", n.Name())
+
+		n.runCommand("sudo systemctl stop consul")
+		time.Sleep(5 * time.Second)
+		n.runCommand("sudo systemctl start consul")
+
+		logrus.Infof("Restarted consul on %s", n.Name())
+	}
+
+	return nil
+}
+
+func (n *node) waitForListeners() error {
+	return n.runCommandWithTimeOut("netstat -tlpn | grep 9090 | grep LISTEN", 500*time.Millisecond, 50*time.Second)
+}
+
+func (n *node) verifyVTEPs(expVTEPS map[string]bool) (string, error) {
+	var data interface{}
+	actVTEPs := make(map[string]uint32)
+
+	// read vtep information from inspect
+	cmd := "curl -s localhost:9090/inspect/driver | python -mjson.tool"
+	str, err := n.tbnode.RunCommandWithOutput(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	err = json.Unmarshal([]byte(str), &data)
+	if err != nil {
+		logrus.Errorf("Unmarshal error: %v", err)
+		return str, err
+	}
+
+	drvInfo := data.(map[string]interface{})
+	vx, found := drvInfo["vxlan"]
+	if !found {
+		logrus.Errorf("vxlan not found in driver info")
+		return str, errors.New("vxlan not found in driver info")
+	}
+
+	vt := vx.(map[string]interface{})
+	v, found := vt["VtepTable"]
+	if !found {
+		logrus.Errorf("VtepTable not found in driver info")
+		return str, errors.New("VtepTable not found in driver info")
+	}
+
+	vteps := v.(map[string]interface{})
+	for key := range vteps {
+		actVTEPs[key] = 1
+	}
+
+	// read local ip
+	l, found := vt["LocalIp"]
+	if found {
+		switch l.(type) {
+		case string:
+			localVtep := l.(string)
+			actVTEPs[localVtep] = 1
+		}
+	}
+
+	for vtep := range expVTEPS {
+		_, found := actVTEPs[vtep]
+		if !found {
+			return str, errors.New("VTEP " + vtep + " not found")
+		}
+	}
+
+	return "", nil
+}
+func (n *node) verifyEPs(epList []string) (string, error) {
+	// read ep information from inspect
+	cmd := "curl -s localhost:9090/inspect/driver | python -mjson.tool"
+	str, err := n.tbnode.RunCommandWithOutput(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	for _, ep := range epList {
+		if !strings.Contains(str, ep) {
+			return str, errors.New(ep + " not found on " + n.Name())
+		}
+	}
+
+	return "", nil
 }

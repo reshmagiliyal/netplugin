@@ -26,17 +26,26 @@ func (s *systemtestSuite) TestACIMode(c *C) {
 		Encap:       "vlan",
 	}), IsNil)
 
+	err := s.nodes[0].checkDockerNetworkCreated("aciNet", false)
+	c.Assert(err, IsNil)
+
 	c.Assert(s.cli.EndpointGroupPost(&client.EndpointGroup{
 		TenantName:  "default",
 		NetworkName: "aciNet",
 		GroupName:   "epgA",
 	}), IsNil)
 
+	err = s.nodes[0].checkDockerNetworkCreated("epgA", true)
+	c.Assert(err, IsNil)
+
 	c.Assert(s.cli.EndpointGroupPost(&client.EndpointGroup{
 		TenantName:  "default",
 		NetworkName: "aciNet",
 		GroupName:   "epgB",
 	}), IsNil)
+
+	err = s.nodes[0].checkDockerNetworkCreated("epgB", true)
+	c.Assert(err, IsNil)
 
 	cA1, err := s.nodes[0].runContainer(containerSpec{networkName: "epgA"})
 	c.Assert(err, IsNil)
@@ -56,6 +65,21 @@ func (s *systemtestSuite) TestACIMode(c *C) {
 	c.Assert(cB1.checkPing(cB2.eth0.ip), IsNil)
 	// Verify cA1 cannot ping cB1
 	c.Assert(cA1.checkPingFailure(cB1.eth0.ip), IsNil)
+
+	log.Infof("Triggering netplugin restart")
+	node1 := s.nodes[0]
+	c.Assert(node1.stopNetplugin(), IsNil)
+	c.Assert(node1.rotateLog("netplugin"), IsNil)
+	c.Assert(node1.startNetplugin(""), IsNil)
+	c.Assert(node1.runCommandUntilNoError("pgrep netplugin"), IsNil)
+	time.Sleep(20 * time.Second)
+
+	// Verify cA1 can ping cA2
+	c.Assert(cA1.checkPingWithCount(cA2.eth0.ip, 3), IsNil)
+	// Verify cB1 can ping cB2
+	c.Assert(cB1.checkPingWithCount(cB2.eth0.ip, 3), IsNil)
+	// Verify cA1 cannot ping cB1
+	c.Assert(cA1.checkPingFailureWithCount(cB1.eth0.ip, 5), IsNil)
 
 	c.Assert(s.removeContainers([]*container{cA1, cA2, cB1, cB2}), IsNil)
 	c.Assert(s.cli.EndpointGroupDelete("default", "epgA"), IsNil)
