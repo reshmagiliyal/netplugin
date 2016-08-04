@@ -78,7 +78,7 @@ type InstanceInfo struct {
 	StateDriver StateDriver `json:"-"`
 	HostLabel   string      `json:"host-label"`
 	VtepIP      string      `json:"vtep-ip"`
-	VlanIntf    string      `json:"vlan-if"`
+	VlanIntf    []string    `json:"vlan-if"`
 	RouterIP    string      `json:"router-ip"`
 	FwdMode     string      `json:"fwd-mode"`
 	DbURL       string      `json:"db-url"`

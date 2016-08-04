@@ -67,6 +67,8 @@ type cliOpts struct {
 	dbURL      string // state store URL
 }
 
+var vlanIntf []string
+
 func skipHost(vtepIP, homingHost, myHostLabel string) bool {
 	return (vtepIP == "" && homingHost != myHostLabel ||
 		vtepIP != "" && homingHost == myHostLabel)
@@ -577,6 +579,10 @@ func main() {
 		log.Fatalf("Failed to parse command. Error: %s", err)
 	}
 
+	if opts.vlanIntf != "" {
+		vlanIntf = strings.Split(opts.vlanIntf, ",")
+	}
+
 	if opts.version {
 		fmt.Printf(version.String())
 		os.Exit(0)
@@ -637,7 +643,7 @@ func main() {
 		Instance: core.InstanceInfo{
 			HostLabel: opts.hostLabel,
 			VtepIP:    opts.vtepIP,
-			VlanIntf:  opts.vlanIntf,
+			VlanIntf:  vlanIntf,
 			DbURL:     opts.dbURL,
 		},
 	}
@@ -759,7 +765,7 @@ func processGlobalFwdModeUpdEvent(netPlugin *plugin.NetPlugin, opts cliOpts, fwd
 		Instance: core.InstanceInfo{
 			HostLabel: opts.hostLabel,
 			VtepIP:    opts.vtepIP,
-			VlanIntf:  opts.vlanIntf,
+			VlanIntf:  vlanIntf,
 			DbURL:     opts.dbURL,
 			FwdMode:   fwdMode,
 		},

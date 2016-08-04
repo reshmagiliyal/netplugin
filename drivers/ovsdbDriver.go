@@ -269,8 +269,6 @@ func (d *OvsdbDriver) CreatePort(intfName, intfType, id string, tag int) error {
 	opStr := "insert"
 
 	var err error
-
-	// insert/delete a row in Interface table
 	idMap := make(map[string]string)
 	intfOp := libovsdb.Operation{}
 	intf := make(map[string]interface{})
@@ -327,6 +325,111 @@ func (d *OvsdbDriver) CreatePort(intfName, intfType, id string, tag int) error {
 	}
 
 	operations := []libovsdb.Operation{intfOp, portOp, mutateOp}
+	return d.performOvsdbOps(operations)
+}
+
+//AddDeleteBond adds bond btw 2 interfaces.
+func (d *OvsdbDriver) AddDeleteBond(intfName, bondName, intfType string) error {
+	// intfName is assumed to be unique enough to become uuid
+	portUUIDStr := intfName
+	intfUUIDStr := fmt.Sprintf("Intf%s", intfName)
+	portUUID := []libovsdb.UUID{libovsdb.UUID{GoUuid: portUUIDStr}}
+	intfUUID := []libovsdb.UUID{libovsdb.UUID{GoUuid: intfUUIDStr}}
+	opStr := "insert"
+
+	var err error
+	// insert/delete a row in Interface table
+	intfOp := libovsdb.Operation{}
+	intf := make(map[string]interface{})
+	intf["name"] = intfName
+	intf["type"] = intfType
+
+	// interface table ops
+	intfOp = libovsdb.Operation{
+		Op:       opStr,
+		Table:    interfaceTable,
+		Row:      intf,
+		UUIDName: intfUUIDStr,
+	}
+	// insert/delete a row in Port table bond_mode can be balance-tcp, balance-slb or active_backup
+	//default mode is active_backup
+	lacpMap := make(map[string]string)
+	mode := "balance-tcp"
+	portOp := libovsdb.Operation{}
+	port := make(map[string]interface{})
+	port["name"] = bondName
+	port["vlan_mode"] = "trunk"
+	port["bond_mode"] = mode
+	port["lacp"] = "active"
+	lacpMap["lacp-fallback-ab"] = "true"
+	port["interfaces"], err = libovsdb.NewOvsSet(intfUUID)
+	if err != nil {
+		return err
+	}
+	port["other_config"], err = libovsdb.NewOvsMap(lacpMap)
+	if err != nil {
+		return err
+	}
+
+	portOp = libovsdb.Operation{
+		Op:       opStr,
+		Table:    portTable,
+		Row:      port,
+		UUIDName: portUUIDStr,
+	}
+
+	// mutate the Ports column of the row in the Bridge table
+	mutateSet, _ := libovsdb.NewOvsSet(portUUID)
+	mutation := libovsdb.NewMutation("ports", opStr, mutateSet)
+	condition := libovsdb.NewCondition("name", "==", d.bridgeName)
+	mutateOp := libovsdb.Operation{
+		Op:        "mutate",
+		Table:     bridgeTable,
+		Mutations: []interface{}{mutation},
+		Where:     []interface{}{condition},
+	}
+
+	operations := []libovsdb.Operation{intfOp, portOp, mutateOp}
+	return d.performOvsdbOps(operations)
+
+}
+
+//AddMembersToBond adds entry in the interafce table.
+func (d *OvsdbDriver) AddMembersToBond(intfName, bondName, intfType string) error {
+	log.Infof("adding member:%s to bond:%s ", intfName, bondName)
+
+	intfUUIDStr := fmt.Sprintf("Intf%s", intfName)
+	intfUUID := []libovsdb.UUID{libovsdb.UUID{GoUuid: intfUUIDStr}}
+
+	intf := make(map[string]interface{})
+	intf["name"] = intfName
+	intf["type"] = intfType
+
+	opStr := "insert"
+
+	//add a new interface.
+	intfOp := libovsdb.Operation{
+		Op:       opStr,
+		Table:    interfaceTable,
+		Row:      intf,
+		UUIDName: intfUUIDStr,
+	}
+
+	// mutate the interface column of the row in the port table
+	mutatePortSet, _ := libovsdb.NewOvsSet(intfUUID)
+	portMutation := libovsdb.NewMutation("interfaces", opStr, mutatePortSet)
+	newCondition := libovsdb.NewCondition("name", "==", bondName)
+
+	// interface table ops
+	portOp := libovsdb.Operation{
+		Op:        "mutate",
+		Table:     portTable,
+		Mutations: []interface{}{portMutation},
+		Where:     []interface{}{newCondition},
+	}
+
+	operations := []libovsdb.Operation{intfOp, portOp}
+	log.Infof("Operation: %+v", operations)
 	return d.performOvsdbOps(operations)
 }
 

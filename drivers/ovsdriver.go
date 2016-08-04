@@ -141,18 +141,21 @@ func (d *OvsDriver) Init(info *core.InstanceInfo) error {
 	if err != nil {
 		log.Fatalf("Error creating vlan switch. Err: %v", err)
 	}
+	bondName := "bond0"
+
 	// Create Vlan switch
 	d.switchDb["vlan"], err = NewOvsSwitch(vlanBridgeName, "vlan", info.VtepIP,
-		info.FwdMode, info.VlanIntf)
+		info.FwdMode, bondName)
 	if err != nil {
 		log.Fatalf("Error creating vlan switch. Err: %v", err)
 	}
 
-	// Add uplink to VLAN switch
-	if info.VlanIntf != "" {
-		err = d.switchDb["vlan"].AddUplinkPort(info.VlanIntf)
+	//add interfaces and bond.
+	if len(info.VlanIntf) > 0 {
+
+		err = d.switchDb["vlan"].AddUplinkBond(info.VlanIntf, bondName)
 		if err != nil {
-			log.Errorf("Could not add uplink %s to vlan OVS. Err: %v", info.VlanIntf, err)
+			log.Errorf("Error creating bond %s with ports %v to vlan OVS. Err: %v", bondName, info.VlanIntf, err)
 		}
 	}
 

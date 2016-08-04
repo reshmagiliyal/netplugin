@@ -579,6 +579,28 @@ func (sw *OvsSwitch) AddUplinkPort(intfName string) error {
 	return nil
 }
 
+//AddUplinkBond adds bond to the interfaces.
+func (sw *OvsSwitch) AddUplinkBond(intfNames []string, bondName string) error {
+	var err error
+	for i, intfName := range intfNames {
+		log.Infof("Adding bond: %s to interface: %s ", bondName, intfName)
+
+		if i == 0 {
+			err = sw.ovsdbDriver.AddDeleteBond(intfName, bondName, "")
+			if err != nil {
+				log.Errorf("Error adding uplink to OVS. Err: %v", err)
+				return err
+			}
+			continue
+		}
+		err = sw.ovsdbDriver.AddMembersToBond(intfName, bondName, "")
+		if err != nil {
+			log.Errorf("Error adding interfaces: %s to bond: %s", intfName, bondName)
+		}
+	}
+	return nil
+}
+
 // AddHostPort adds a host port to the OVS
 func (sw *OvsSwitch) AddHostPort(intfName string, intfNum int, isHostNS bool) error {
 	var err error
